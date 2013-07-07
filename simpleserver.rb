@@ -9,15 +9,20 @@ module Logger
 	end
 	
 	def log_info(message)
-		log("INFO: " + message)
+		log("INFO (#{Time.now.to_s}): #{message}")
 		true
 	end
 	
 	def log_error(message)
-		log("ERROR: " + message)
+		log("ERROR (#{Time.now.to_s}): #{message}")
 		false
 	end
 	
+	def log_warn(message)
+		log("WARN (#{Time.now.to_s}): #{message}")
+		true
+	end
+
 	private
 	
 	def log(message)
@@ -38,11 +43,12 @@ class CommandHandler
 
 	def dispatch(statement, connection)
 			method = ("cmd_" + statement.first.downcase).to_sym
-			arguments = statement.slice(1..-1)
 			log_info("Client #{connection} dispatching #{method} => #{statement.to_s}")
 			
 			@mutex.synchronize {
-				self.send(method, connection, *arguments)
+				@connection = connection
+				self.send(method, *statement)
+				@connection = nil
 			}
 	end
 	
@@ -51,51 +57,56 @@ class CommandHandler
 	end
 
 	# Handling the case where a command is sent that isn't actually understood
+	alias logger_old_method_missing method_missing
 	def method_missing(key, *args)
-		return log_error("Command \"#{key}\" is not understood with arguments => #{args.to_s}") if key =~ /^cmd_/
-		super.method_missing(key, *args)
+		if key =~ /^cmd_/ then
+			reply_error("unknown command '#{args[0]}'")
+			log_warn("Command \"#{key}\" is not understood with arguments => #{args.to_s}")
+		else
+			logger_old_method_missing(key, *args)
+		end
 	end
 	
 	private
 	
 	#TODO reply_ messages probably should just return the string and this gets handled at the server level
-	def reply_ok(connection)
-		connection.puts "+OK\r\n"
+	def reply_ok()
+		@connection.puts "+OK\r\n"
 	end
 	
-	def reply_error(connection, message)
-		connection.puts "-ERR #{message}\r\n"
+	def reply_error(message)
+		@connection.puts "-ERR #{message}\r\n"
 	end
 	
-	def reply_bulk(connection, message)
+	def reply_bulk(message)
 		if message.nil?
-			connection.puts "$-1\r\n"
+			@connection.puts "$-1\r\n"
 		else
-			connection.puts "$#{message.length}\r\n#{message}\r\n"
+			@connection.puts "$#{message.length}\r\n#{message}\r\n"
 		end
 	end
 
-	def cmd_(connection, *args)
-		reply_error(connection, "unknown command ''")
+	def cmd_(*args)
+		reply_error("unknown command ''")
 	end
 	alias cmd_null cmd_
 
-	def cmd_set(connection, *args)
+	def cmd_set(*args)
 		#TODO Handle special case or extended commands for "SET"
-		return log_error("SET command did not receive key/value pair #{args.to_s}") if args.length < 2	
-		return log_error("SET command had more than a key/value pair #{args.to_s}") if args.length > 2
+		return log_error("SET command did not receive key/value pair #{args.to_s}") if args.length < 3
+		return log_error("SET command had more than a key/value pair #{args.to_s}") if args.length > 3
 
-		@datastore[args[0].to_sym] = args[1]
+		@datastore[args[1].to_sym] = args[2]
 		log_cmd("SET", args)
-		reply_ok(connection)
+		reply_ok()
 	end
 	
-	def cmd_get(connection, *args)
-		log_error("GET command received more than a single key #{args.to_s}") if args.length != 1
+	def cmd_get(*args)
+		log_error("GET command received more than a single key #{args.to_s}") if args.length != 2
 		
-		value = @datastore[args[0].to_sym]		
+		value = @datastore[args[1].to_sym]
 		log_cmd("GET", args)
-		reply_bulk(connection, value)
+		reply_bulk(value)
 	end
 end
 
