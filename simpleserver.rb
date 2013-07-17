@@ -74,10 +74,6 @@ class CommandHandler
 		@connection.puts "+OK\r\n"
 	end
 	
-	def reply_error(message)
-		@connection.puts "-ERR #{message}\r\n"
-	end
-	
 	def reply_bulk(message)
 		if message.nil?
 			@connection.puts "$-1\r\n"
@@ -86,15 +82,43 @@ class CommandHandler
 		end
 	end
 
+	def reply_integer(value)
+		@connection.puts ":#{value.to_s}\r\n"
+	end
+
+	# ERROR replies
+	def reply_error(message)
+		@connection.puts "-ERR #{message}\r\n"
+	end
+
+	def reply_key_wrong_type(*args)
+		reply_error("Operation against a key holding the wrong kind of value")
+	end
+	
+	def reply_wrong_number_of_arguments(command_name)
+		reply_error("wrong number of arguments for '#{command_name}' command")
+	end
+
+	def reply_index_out_of_range()
+		reply_error("index out of range")
+	end
+	
+	def reply_value_not_integer_or_out_of_range()
+		reply_error("value is not an integer or out of range")
+	end
+
 	def cmd_(*args)
 		reply_error("unknown command ''")
 	end
 	alias cmd_null cmd_
 
+	#
+	# STRING commands
+	#
+
 	def cmd_set(*args)
 		#TODO Handle special case or extended commands for "SET"
-		return log_error("SET command did not receive key/value pair #{args.to_s}") if args.length < 3
-		return log_error("SET command had more than a key/value pair #{args.to_s}") if args.length > 3
+		return reply_wrong_number_of_arguments("set") if args.length != 3
 
 		@datastore[args[1].to_sym] = args[2]
 		log_cmd("SET", args)
@@ -102,11 +126,65 @@ class CommandHandler
 	end
 	
 	def cmd_get(*args)
-		log_error("GET command received more than a single key #{args.to_s}") if args.length != 2
+		return reply_wrong_number_of_arguments("get") if args.length != 2
 		
 		value = @datastore[args[1].to_sym]
 		log_cmd("GET", args)
+
+		return reply_bulk(nil) if value.nil?
+		return reply_key_wrong_type(*args) if not value.is_a? String
 		reply_bulk(value)
+	end
+	
+	#
+	# LIST commands
+	#
+
+	def cmd_lindex(*args)
+		return reply_wrong_number_of_arguments("lindex") if args.length != 3
+		
+		list = @datastore[args[1].to_sym]
+		return reply_bulk(nil) if list.nil?
+		return reply_key_wrong_type(*args) if not list.is_a? Array
+
+		begin
+			index = Integer(args[2], 10)
+		rescue ArgumentError => e
+			return reply_value_not_integer_or_out_of_range()
+		end
+
+		length = list.length
+		return reply_index_out_of_range() if (not index < length) or (not (index.abs - 1) < length)
+
+		reply_bulk(list[index])
+	end
+
+	def cmd_lpop(*args)
+		return reply_wrong_number_of_arguments("lpop") if args.length != 2
+
+		list = @datastore[args[1].to_sym]
+		return reply_bulk(nil) if list.nil?
+		return reply_key_wrong_type(*args) if not list.is_a? Array
+		
+		value = list.shift
+		@datastore[args[1].to_sym] = nil if list.empty?
+		log_cmd("LPOP", args)
+		reply_bulk(value)
+	end
+
+	def cmd_lpush(*args)
+		return reply_wrong_number_of_arguments("lpush") if args.length < 3
+
+		list = @datastore[args[1].to_sym]
+		list = (@datastore[args[1].to_sym] = []) if list.nil?
+		return reply_key_wrong_type(*args) if not list.is_a? Array
+		
+		args[2..-1].each do | value |
+			list.unshift(value)
+		end
+		log_cmd("LPUSH", args)
+		
+		reply_integer(args.length - 2)
 	end
 end
 
@@ -123,7 +201,7 @@ class CommandParser
 		return log_error("Client argument length contained no value \"#{arg}\"") if arg.length < 1
 
 		begin
-			Integer(arg[1..-1])
+			Integer(arg[1..-1], 10)
 		rescue ArgumentError => e
 			log_error("Client command count not a valid integer format \"#{arg}\"")
 		end
@@ -185,6 +263,7 @@ class Server
 					log_error("Exception on socket: #{e.to_s}")
 				rescue Exception => e
 					log_error("Something unexpected happend: #{e.class} => #{e.to_s}")
+					log_error(e.backtrace)
 				end
 				log_info("Client #{connection} terminating")
 				connection.close
