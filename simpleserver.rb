@@ -159,6 +159,16 @@ class CommandHandler
 		reply_bulk(list[index])
 	end
 
+	def cmd_llen(*args)
+		return reply_wrong_number_of_arguments("llen") if args.length != 2
+		
+		list = @datastore[args[1].to_sym]
+		return reply_integer(0) if list.nil?
+		return reply_key_wrong_type(*args) if not list.is_a? Array
+
+		reply_integer(list.length)
+	end
+			
 	def cmd_lpop(*args)
 		return reply_wrong_number_of_arguments("lpop") if args.length != 2
 
