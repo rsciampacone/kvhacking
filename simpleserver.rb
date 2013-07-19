@@ -196,6 +196,35 @@ class CommandHandler
 		
 		reply_integer(args.length - 2)
 	end
+	
+	#
+	# HASH commands
+	#
+	
+	def cmd_hset(*args)
+		return reply_wrong_number_of_arguments("hset") if args.length != 4
+
+		hash = @datastore[args[1].to_sym]
+		hash = (@datastore[args[1].to_sym] = {}) if hash.nil?
+		return reply_key_wrong_type(*args) if not hash.is_a? Hash
+
+		log_cmd("HSET", args)
+		create_or_update = hash[args[2]].nil? ? 1 : 0
+		hash[args[2]] = args[3]
+		
+		reply_integer(create_or_update)
+	end
+
+	def cmd_hget(*args)
+		return reply_wrong_number_of_arguments("hget") if args.length != 3
+
+		hash = @datastore[args[1].to_sym]
+		return reply_bulk(nil) if hash.nil?
+		return reply_key_wrong_type(*args) if not hash.is_a? Hash
+
+		log_cmd("HGET", args)
+		reply_bulk(hash[args[2]])
+	end
 end
 
 class CommandParser
