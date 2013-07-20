@@ -1,5 +1,6 @@
 require 'socket'
 require 'thread' #using threads and older Ruby needs this for Mutex
+require 'set'
 
 module Logger
 	def self.init_logging(io)
@@ -82,6 +83,18 @@ class CommandHandler
 		end
 	end
 
+	def reply_multi_bulk(list_or_set)
+		if list_or_set.nil?
+			@connection.puts "*-1\r\n"
+		else
+			@connection.puts "*#{list_or_set.length}\r\n"
+			list_or_set.each do | element |
+				@connection.puts "$#{element.length}\r\n"
+				@connection.puts "#{element}\r\n"
+			end
+		end
+	end
+
 	def reply_integer(value)
 		@connection.puts ":#{value.to_s}\r\n"
 	end
@@ -121,7 +134,6 @@ class CommandHandler
 		return reply_wrong_number_of_arguments("set") if args.length != 3
 
 		@datastore[args[1].to_sym] = args[2]
-		log_cmd("SET", args)
 		reply_ok()
 	end
 	
@@ -129,7 +141,6 @@ class CommandHandler
 		return reply_wrong_number_of_arguments("get") if args.length != 2
 		
 		value = @datastore[args[1].to_sym]
-		log_cmd("GET", args)
 
 		return reply_bulk(nil) if value.nil?
 		return reply_key_wrong_type(*args) if not value.is_a? String
@@ -178,7 +189,7 @@ class CommandHandler
 		
 		value = list.shift
 		@datastore[args[1].to_sym] = nil if list.empty?
-		log_cmd("LPOP", args)
+
 		reply_bulk(value)
 	end
 
@@ -192,7 +203,6 @@ class CommandHandler
 		args[2..-1].each do | value |
 			list.unshift(value)
 		end
-		log_cmd("LPUSH", args)
 		
 		reply_integer(args.length - 2)
 	end
@@ -208,7 +218,6 @@ class CommandHandler
 		hash = (@datastore[args[1].to_sym] = {}) if hash.nil?
 		return reply_key_wrong_type(*args) if not hash.is_a? Hash
 
-		log_cmd("HSET", args)
 		create_or_update = hash[args[2]].nil? ? 1 : 0
 		hash[args[2]] = args[3]
 		
@@ -222,8 +231,68 @@ class CommandHandler
 		return reply_bulk(nil) if hash.nil?
 		return reply_key_wrong_type(*args) if not hash.is_a? Hash
 
-		log_cmd("HGET", args)
 		reply_bulk(hash[args[2]])
+	end
+	
+	#
+	# SET commands
+	#
+	
+	def cmd_sadd(*args)
+		return reply_wrong_number_of_arguments("sadd") if args.length < 3
+
+		set = @datastore[args[1].to_sym]
+		set = (@datastore[args[1].to_sym] = Set.new) if set.nil?
+		return reply_key_wrong_type(*args) if not set.instance_of? Set
+		
+		members_added = 0
+		args[2..-1].each do | element |
+			members_added += 1 if set.add?(element)
+		end
+		
+		reply_integer(members_added)
+	end
+
+	def cmd_smembers(*args)
+		return reply_wrong_number_of_arguments("smembers") if args.length != 2
+
+		set = @datastore[args[1].to_sym]
+		return reply_multi_bulk([]) if set.nil?
+		return reply_key_wrong_type(*args) if not set.instance_of? Set
+		
+		reply_multi_bulk(set)
+	end
+	
+	def cmd_srem(*args)
+		return reply_wrong_number_of_arguments("srem") if args.length < 3
+
+		set = @datastore[args[1].to_sym]
+		return reply_integer(0) if set.nil?
+		return reply_key_wrong_type(*args) if not set.instance_of? Set
+		
+		members_removed = 0
+		args[2..-1].each do | element |
+			members_removed += 1 if set.delete?(element)
+		end
+		@datastore[args[1].to_sym] = nil if set.empty?
+
+		reply_integer(members_removed)
+	end
+	
+	#
+	# SORTED SET commands
+	#
+	
+	def cmd_zadd(*args)
+	end
+
+	def cmd_zcount(*args)
+	end
+	
+	def cmd_zrem(*args)
+	end
+	
+	def cmd_zscore(*args)
 	end
 end
 
